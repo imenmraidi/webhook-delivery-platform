@@ -1,0 +1,10 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/webhooks
+    username: webhooks
+    password: webhooks
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
