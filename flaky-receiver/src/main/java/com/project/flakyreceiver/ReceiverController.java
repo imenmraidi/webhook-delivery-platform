@@ -15,6 +15,8 @@ public class ReceiverController {
 
 	private static final Logger log = LoggerFactory.getLogger(ReceiverController.class);
 
+	private static final long RECEIVE_DELAY_MS = 3_000L; // experiment: burst/lag
+
 	@PostMapping("/hooks")
 	public ResponseEntity<Void> receive(@RequestBody String body,
 										@RequestHeader HttpHeaders headers) {
@@ -22,6 +24,11 @@ public class ReceiverController {
 		log.info("receiver hit at {} body={}", Instant.now(), body);
 		System.out.println("RECEIVED: " + body);
 		System.out.println("HEADERS: " + headers);
+		try {
+			Thread.sleep(RECEIVE_DELAY_MS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
 		log.info("receiver responding at {} afterMs={}", Instant.now(), (System.nanoTime() - t0) / 1_000_000);
 		return ResponseEntity.ok().build();
 	}

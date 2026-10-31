@@ -14,14 +14,14 @@ public class EventService {
     private final EventRepository events;
     private final EndpointRepository endpoints;
     private final DeliveryRepository deliveries;
-    private final DeliveryService deliveryService;
+    private final DeliveryPublisher publisher;
 
     public EventService(EventRepository events, EndpointRepository endpoints,
-            DeliveryRepository deliveries, DeliveryService deliveryService) {
+            DeliveryRepository deliveries, DeliveryPublisher publisher) {
         this.events = events;
         this.endpoints = endpoints;
         this.deliveries = deliveries;
-        this.deliveryService = deliveryService;
+        this.publisher = publisher;
     }
 
     public Event ingest(String type, String payloadJson) {
@@ -29,7 +29,7 @@ public class EventService {
 
         for (WebhookEndpoint ep : endpoints.findSubscribers(type)) {
             Delivery d = deliveries.save(new Delivery(event.getId(), ep.getId()));
-            deliveryService.attempt(d.getId());   // returns immediately
+            publisher.publish(d);   // was: deliveryService.attempt(d.getId())
         }
         return event;
     }

@@ -13,7 +13,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
@@ -43,12 +42,14 @@ public class DeliveryService {
         this.http = RestClient.builder().requestFactory(factory).build();
     }
 
-    @Async("deliveryExecutor")
     public void attempt(UUID deliveryId) {
         long t0 = System.nanoTime();
         log.info("attempt start delivery={} thread={}", deliveryId, Thread.currentThread().getName());
 
         Delivery d = deliveries.findById(deliveryId).orElseThrow();
+        if ("DELIVERED".equals(d.getStatus())) {
+            return; // already done, ignore the duplicate
+        }
         WebhookEndpoint ep = endpoints.findById(d.getEndpointId()).orElseThrow();
         Event event = events.findById(d.getEventId()).orElseThrow();
         log.info("attempt loaded delivery={} url={} eventType={} afterMs={}",
