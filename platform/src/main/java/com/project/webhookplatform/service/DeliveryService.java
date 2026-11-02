@@ -1,13 +1,16 @@
 package com.project.webhookplatform.service;
 
 import com.project.webhookplatform.model.Delivery;
+import com.project.webhookplatform.model.DeliveryAttempt;
 import com.project.webhookplatform.model.Event;
 import com.project.webhookplatform.model.WebhookEndpoint;
+import com.project.webhookplatform.repository.DeliveryAttemptRepository;
 import com.project.webhookplatform.repository.DeliveryRepository;
 import com.project.webhookplatform.repository.EndpointRepository;
 import com.project.webhookplatform.repository.EventRepository;
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,15 +26,19 @@ public class DeliveryService {
     private static final Logger log = LoggerFactory.getLogger(DeliveryService.class);
 
     private final DeliveryRepository deliveries;
+    private final DeliveryAttemptRepository attempts;
     private final EndpointRepository endpoints;
     private final EventRepository events;
     private final RestClient http;
+    private final RetryPolicy policy;
 
-    public DeliveryService(DeliveryRepository deliveries, EndpointRepository endpoints,
-            EventRepository events) {
+    public DeliveryService(DeliveryRepository deliveries, DeliveryAttemptRepository attempts,
+            EndpointRepository endpoints, EventRepository events, RetryPolicy policy) {
         this.deliveries = deliveries;
+        this.attempts = attempts;
         this.endpoints = endpoints;
         this.events = events;
+        this.policy = policy;
 
         var factory = new JdkClientHttpRequestFactory(
                 HttpClient.newBuilder()
@@ -43,19 +50,15 @@ public class DeliveryService {
     }
 
     public void attempt(UUID deliveryId) {
-        long t0 = System.nanoTime();
-        log.info("attempt start delivery={} thread={}", deliveryId, Thread.currentThread().getName());
-
         Delivery d = deliveries.findById(deliveryId).orElseThrow();
-        if ("DELIVERED".equals(d.getStatus())) {
-            return; // already done, ignore the duplicate
-        }
-        WebhookEndpoint ep = endpoints.findById(d.getEndpointId()).orElseThrow();
-        Event event = events.findById(d.getEventId()).orElseThrow();
-        log.info("attempt loaded delivery={} url={} eventType={} afterMs={}",
-                deliveryId, ep.getUrl(), event.getType(), ms(t0));
+        if (d.isFinished()) return;
 
+        Instant start = Instant.now();
+        int status;
+        String error = null;
         try {
+            WebhookEndpoint ep = endpoints.findById(d.getEndpointId()).orElseThrow();
+            Event event = events.findById(d.getEventId()).orElseThrow();
             var response = http.post()
                     .uri(ep.getUrl())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -64,24 +67,28 @@ public class DeliveryService {
                     .body(event.getPayload())
                     .retrieve()
                     .toBodilessEntity();
-            log.info("attempt response delivery={} status={} afterMs={}",
-                    deliveryId, response.getStatusCode().value(), ms(t0));
-            d.recordResult(response.getStatusCode().value(), null);
+            status = response.getStatusCode().value();
         } catch (RestClientResponseException e) {
-            log.warn("attempt http error delivery={} status={} afterMs={}",
-                    deliveryId, e.getStatusCode().value(), ms(t0));
-            d.recordResult(e.getStatusCode().value(), e.getMessage());
+            status = e.getStatusCode().value();
+            error = e.getMessage();
         } catch (Exception e) {
-            log.warn("attempt transport error delivery={} ex={} msg={} afterMs={}",
-                    deliveryId, e.getClass().getSimpleName(), e.getMessage(), ms(t0));
-            d.recordResult(0, e.getMessage());
+            status = 0;
+            error = e.getMessage();
         }
-        deliveries.save(d);
-        log.info("attempt end delivery={} status={} attemptCount={} lastStatusCode={} totalMs={}",
-                deliveryId, d.getStatus(), d.getAttemptCount(), d.getLastStatusCode(), ms(t0));
-    }
+        long ms = Duration.between(start, Instant.now()).toMillis();
 
-    private static long ms(long t0) {
-        return (System.nanoTime() - t0) / 1_000_000;
+        Outcome outcome = policy.classify(status);
+        int attemptNo = d.getAttemptCount() + 1;
+
+        if (outcome == Outcome.SUCCESS) {
+            d.markDelivered(status);
+        } else if (outcome == Outcome.PERMANENT || policy.exhausted(attemptNo)) {
+            d.markDead(status, error);
+        } else {
+            d.scheduleRetry(status, error, Instant.now().plus(policy.delayAfter(attemptNo)));
+        }
+
+        attempts.save(new DeliveryAttempt(d.getId(), attemptNo, start, ms, status, error, outcome.name()));
+        deliveries.save(d);
     }
 }

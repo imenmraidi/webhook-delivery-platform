@@ -11,6 +11,11 @@ import java.util.UUID;
 @Table(name = "deliveries")
 public class Delivery {
 
+    public static final String STATUS_PENDING = "PENDING";
+    public static final String STATUS_RETRYING = "RETRYING";
+    public static final String STATUS_DELIVERED = "DELIVERED";
+    public static final String STATUS_DEAD = "DEAD";
+
     @Id
     private UUID id;
 
@@ -31,6 +36,9 @@ public class Delivery {
     @Column(name = "last_error")
     private String lastError;
 
+    @Column(name = "next_attempt_at")
+    private Instant nextAttemptAt;
+
     @Column(name = "created_at")
     private Instant createdAt;
 
@@ -44,51 +52,64 @@ public class Delivery {
         this.id = UUID.randomUUID();
         this.eventId = eventId;
         this.endpointId = endpointId;
-        this.status = "PENDING";
+        this.status = STATUS_PENDING;
         this.createdAt = this.updatedAt = Instant.now();
     }
 
-    public void recordResult(int statusCode, String error) {
-        this.attemptCount++;
-        this.lastStatusCode = statusCode == 0 ? null : statusCode;
-        this.lastError = error;
-        this.status = (statusCode >= 200 && statusCode < 300) ? "DELIVERED" : "FAILED";
-        this.updatedAt = Instant.now();
+    public void markDelivered(int statusCode) {
+        attemptCount++;
+        lastStatusCode = statusCode;
+        lastError = null;
+        status = STATUS_DELIVERED;
+        nextAttemptAt = null;
+        updatedAt = Instant.now();
     }
 
-    public UUID getId() {
-        return id;
+    public void scheduleRetry(int statusCode, String error, Instant when) {
+        attemptCount++;
+        lastStatusCode = statusCode == 0 ? null : statusCode;
+        lastError = error;
+        status = STATUS_RETRYING;
+        nextAttemptAt = when;
+        updatedAt = Instant.now();
     }
 
-    public UUID getEventId() {
-        return eventId;
+    public void markDead(int statusCode, String error) {
+        attemptCount++;
+        lastStatusCode = statusCode == 0 ? null : statusCode;
+        lastError = error;
+        status = STATUS_DEAD;
+        nextAttemptAt = null;
+        updatedAt = Instant.now();
     }
 
-    public UUID getEndpointId() {
-        return endpointId;
+    public void markQueued() {
+        status = STATUS_PENDING;
+        nextAttemptAt = null;
+        updatedAt = Instant.now();
     }
 
-    public String getStatus() {
-        return status;
+    public boolean isFinished() {
+        return STATUS_DELIVERED.equals(status) || STATUS_DEAD.equals(status);
     }
 
-    public int getAttemptCount() {
-        return attemptCount;
-    }
+    public UUID getId() { return id; }
 
-    public Integer getLastStatusCode() {
-        return lastStatusCode;
-    }
+    public UUID getEventId() { return eventId; }
 
-    public String getLastError() {
-        return lastError;
-    }
+    public UUID getEndpointId() { return endpointId; }
 
-    public Instant getCreatedAt() {
-        return createdAt;
-    }
+    public String getStatus() { return status; }
 
-    public Instant getUpdatedAt() {
-        return updatedAt;
-    }
+    public int getAttemptCount() { return attemptCount; }
+
+    public Integer getLastStatusCode() { return lastStatusCode; }
+
+    public String getLastError() { return lastError; }
+
+    public Instant getNextAttemptAt() { return nextAttemptAt; }
+
+    public Instant getCreatedAt() { return createdAt; }
+
+    public Instant getUpdatedAt() { return updatedAt; }
 }

@@ -19,3 +19,8 @@ spring:
       auto-offset-reset: earliest
       listener:
         concurrency: 3
+delivery:
+  retry:
+    max-attempts: 5
+    base-delay-ms: 1000
+    cap-delay-ms: 30000
